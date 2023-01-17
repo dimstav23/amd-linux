@@ -101,9 +101,7 @@ static int __sev_snp_init_locked(int *error);
 
 static size_t sev_es_tmr_size = SEV_ES_TMR_SIZE;
 
-static int __sev_do_cmd_locked(int cmd, void *data, int *psp_ret);
-
-static inline bool sev_version_greater_or_equal(u8 maj, u8 min)
+bool sev_version_greater_or_equal(u8 maj, u8 min)
 {
 	struct sev_device *sev = psp_master->sev_data;
 
@@ -766,7 +764,7 @@ static int snp_aware_copy_from_firmware(int cmd, void *data, int fw_err)
 	return __snp_cmd_buf_copy(cmd, data, false, fw_err);
 }
 
-static int __sev_do_cmd_locked(int cmd, void *data, int *psp_ret)
+int __sev_do_cmd_locked(int cmd, void *data, int *psp_ret)
 {
 	struct psp_device *psp = psp_master;
 	struct sev_device *sev;
