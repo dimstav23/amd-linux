@@ -18,6 +18,7 @@
 #include <linux/kvm_types.h>
 #include <linux/kvm_host.h>
 #include <linux/bits.h>
+#include <linux/psp-sev.h>
 
 #include <asm/svm.h>
 #include <asm/sev-common.h>
@@ -757,5 +758,10 @@ DEFINE_KVM_GHCB_ACCESSORS(sw_exit_info_1)
 DEFINE_KVM_GHCB_ACCESSORS(sw_exit_info_2)
 DEFINE_KVM_GHCB_ACCESSORS(sw_scratch)
 DEFINE_KVM_GHCB_ACCESSORS(xcr0)
+
+unsigned long snp_setup_guest_buf(struct vcpu_svm *svm,
+				  struct sev_data_snp_guest_request *data,
+				  gpa_t req_gpa, gpa_t resp_gpa);
+void snp_cleanup_guest_buf(struct sev_data_snp_guest_request *data, unsigned long *rc);
 
 #endif

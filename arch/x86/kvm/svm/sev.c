@@ -3634,9 +3634,9 @@ out:
 	return ret;
 }
 
-static unsigned long snp_setup_guest_buf(struct vcpu_svm *svm,
-					 struct sev_data_snp_guest_request *data,
-					 gpa_t req_gpa, gpa_t resp_gpa)
+unsigned long snp_setup_guest_buf(struct vcpu_svm *svm,
+				  struct sev_data_snp_guest_request *data,
+				  gpa_t req_gpa, gpa_t resp_gpa)
 {
 	struct kvm_vcpu *vcpu = &svm->vcpu;
 	struct kvm *kvm = vcpu->kvm;
@@ -3666,19 +3666,21 @@ static unsigned long snp_setup_guest_buf(struct vcpu_svm *svm,
 	return 0;
 }
 
-static void snp_cleanup_guest_buf(struct sev_data_snp_guest_request *data, unsigned long *rc)
+void snp_cleanup_guest_buf(struct sev_data_snp_guest_request *data, unsigned long *rc)
 {
 	u64 pfn = __sme_clr(data->res_paddr) >> PAGE_SHIFT;
+	bool is_ok = (*rc & 0xFFFFFFFF) == SEV_RET_SUCCESS; /* to preserve the GHCB error(s) */
 	int ret;
 
 	ret = snp_page_reclaim(pfn);
-	if (ret)
+	if (ret && is_ok)
 		*rc = SEV_RET_INVALID_ADDRESS;
 
 	ret = rmp_make_shared(pfn, PG_LEVEL_4K);
-	if (ret)
+	if (ret && is_ok)
 		*rc = SEV_RET_INVALID_ADDRESS;
 }
+
 
 static void snp_handle_guest_request(struct vcpu_svm *svm, gpa_t req_gpa, gpa_t resp_gpa)
 {
@@ -3704,8 +3706,8 @@ static void snp_handle_guest_request(struct vcpu_svm *svm, gpa_t req_gpa, gpa_t 
 
 	rc = sev_issue_cmd(kvm, SEV_CMD_SNP_GUEST_REQUEST, &data, &err);
 	if (rc)
-		/* Ensure an error value is returned to guest. */
-		rc = err ? err : SEV_RET_INVALID_ADDRESS;
+		/* use the firmware error code */
+		rc = err;
 
 	snp_cleanup_guest_buf(&data, &rc);
 
