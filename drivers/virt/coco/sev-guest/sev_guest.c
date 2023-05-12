@@ -38,38 +38,6 @@
 #define SNP_REQ_MAX_RETRY_DURATION	(60*HZ)
 #define SNP_REQ_RETRY_DELAY		(2*HZ)
 
-struct snp_guest_crypto {
-	struct crypto_aead *tfm;
-	u8 *iv, *authtag;
-	int iv_len, a_len;
-};
-
-struct snp_guest_dev {
-	struct device *dev;
-	struct miscdevice misc;
-
-	void *certs_data;
-	struct snp_guest_crypto *crypto;
-	/* request and response are in unencrypted memory */
-	struct snp_guest_msg *request, *response;
-
-	/*
-	 * Avoid information leakage by double-buffering shared messages
-	 * in fields that are in regular encrypted memory.
-	 */
-	struct snp_guest_msg secret_request, secret_response;
-
-	struct snp_secrets_page_layout *layout;
-	struct snp_req_data input;
-	union {
-		struct snp_report_req report;
-		struct snp_derived_key_req derived_key;
-		struct snp_ext_report_req ext_report;
-	} req;
-	u32 *os_area_msg_seqno;
-	u8 *vmpck;
-};
-
 static u32 vmpck_id;
 module_param(vmpck_id, uint, 0444);
 MODULE_PARM_DESC(vmpck_id, "The VMPCK ID to use when communicating with the PSP.");
@@ -125,7 +93,7 @@ static inline u64 __snp_get_msg_seqno(struct snp_guest_dev *snp_dev)
 }
 
 /* Return a non-zero on success */
-static u64 snp_get_msg_seqno(struct snp_guest_dev *snp_dev)
+u64 snp_get_msg_seqno(struct snp_guest_dev *snp_dev)
 {
 	u64 count = __snp_get_msg_seqno(snp_dev);
 
@@ -278,7 +246,7 @@ static int dec_payload(struct snp_guest_crypto *crypto, struct snp_guest_msg *ms
 	return enc_dec_message(crypto, msg, msg->payload, plaintext, len, false);
 }
 
-static int verify_and_dec_payload(struct snp_guest_dev *snp_dev, void *payload, u32 sz)
+int verify_and_dec_payload(struct snp_guest_dev *snp_dev, void *payload, u32 sz)
 {
 	struct snp_guest_crypto *crypto = snp_dev->crypto;
 	struct snp_guest_msg *resp = &snp_dev->secret_response;
@@ -312,8 +280,8 @@ static int verify_and_dec_payload(struct snp_guest_dev *snp_dev, void *payload, 
 	return dec_payload(snp_dev->crypto, resp, payload, resp_hdr->msg_sz + crypto->a_len);
 }
 
-static int enc_payload(struct snp_guest_dev *snp_dev, u64 seqno, int version, u8 type,
-			void *payload, size_t sz)
+int enc_payload(struct snp_guest_dev *snp_dev, u64 seqno, int version, u8 type,
+		void *payload, size_t sz)
 {
 	struct snp_guest_msg *req = &snp_dev->secret_request;
 	struct snp_guest_msg_hdr *hdr = &req->hdr;
@@ -712,7 +680,7 @@ static long snp_guest_ioctl(struct file *file, unsigned int ioctl, unsigned long
 	return ret;
 }
 
-static void free_shared_pages(void *buf, size_t sz)
+void free_shared_pages(void *buf, size_t sz)
 {
 	unsigned int npages = PAGE_ALIGN(sz) >> PAGE_SHIFT;
 	int ret;
@@ -729,7 +697,7 @@ static void free_shared_pages(void *buf, size_t sz)
 	__free_pages(virt_to_page(buf), get_order(sz));
 }
 
-static void *alloc_shared_pages(struct device *dev, size_t sz)
+void *alloc_shared_pages(struct device *dev, size_t sz)
 {
 	unsigned int npages = PAGE_ALIGN(sz) >> PAGE_SHIFT;
 	struct page *page;
