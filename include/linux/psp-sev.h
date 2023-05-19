@@ -1064,6 +1064,9 @@ struct snp_guest_msg {
 #define MMIO_VALIDATE_RANGEID(r) ((r) & 0x7)
 #define MMIO_VALIDATE_RESERVED(r) ((r) & 0xFFF0000000000008ULL)
 
+#define MMIO_MK_VALIDATE(start, size, range_id) \
+	( MMIO_VALIDATE_GPA(start) | (get_order(size >> 12) << 4) | ((range_id) & 0xFF))
+
 struct tio_blob_table_entry {
 	guid_t guid;
 	u32 offset;
