@@ -780,7 +780,7 @@ struct sev_data_snp_shutdown_ex {
 	u32 rsvd1:31;
 } __packed;
 
-#ifdef CONFIG_CRYPTO_DEV_SP_PSP
+#if defined(CONFIG_CRYPTO_DEV_SP_PSP) || defined(CONFIG_CRYPTO_DEV_SP_PSP_MODULE)
 
 /**
  * sev_platform_init - perform SEV INIT command
