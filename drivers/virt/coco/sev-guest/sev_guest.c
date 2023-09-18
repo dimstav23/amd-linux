@@ -344,7 +344,7 @@ static int __handle_guest_request(struct snp_guest_dev *snp_dev, u64 exit_code,
 {
 	unsigned long req_start = jiffies;
 	unsigned int override_npages = 0;
-	u64 override_err = 0;
+	u64 override_err = 0, data_npages = 0;
 	int rc;
 
 retry_request:
@@ -354,7 +354,20 @@ retry_request:
 	 * sequence number must be incremented or the VMPCK must be deleted to
 	 * prevent reuse of the IV.
 	 */
-	rc = snp_issue_guest_request(exit_code, &snp_dev->input, rio);
+	/* Call firmware to process the request */
+	if (exit_code == SVM_VMGEXIT_EXT_GUEST_REQUEST) {
+		u64 rax = snp_dev->input.data_gpa, rbx = snp_dev->input.data_npages;
+
+		rc = snp_issue_guest_request(exit_code, snp_dev->input.req_gpa, snp_dev->input.resp_gpa,
+					     &rax, &rbx, NULL, NULL, &rio->exitinfo2);
+
+		if (rio->exitinfo2 == SNP_GUEST_VMM_ERR(SNP_GUEST_VMM_ERR_INVALID_LEN))
+			snp_dev->input.data_npages = rbx;
+	} else {
+		rc = snp_issue_guest_request(exit_code, snp_dev->input.req_gpa, snp_dev->input.resp_gpa,
+					     NULL, NULL, NULL, NULL, &rio->exitinfo2);
+	}
+
 	switch (rc) {
 	case -ENOSPC:
 		/*
@@ -364,7 +377,7 @@ retry_request:
 		 * order to increment the sequence number and thus avoid
 		 * IV reuse.
 		 */
-		override_npages = snp_dev->input.data_npages;
+		override_npages = data_npages;
 		exit_code	= SVM_VMGEXIT_GUEST_REQUEST;
 
 		/*

@@ -12,4 +12,12 @@
 
 #include <linux/types.h>
 
+/* SNP Guest message request */
+struct snp_req_data {
+	unsigned long req_gpa;
+	unsigned long resp_gpa;
+	unsigned long data_gpa;
+	unsigned int data_npages;
+};
+
 #endif /* __VIRT_SEVGUEST_H__ */
