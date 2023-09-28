@@ -1,3 +1,149 @@
+SEV TIO tree prototype
+======================
+
+Goal
+--------
+
+Support secure PCI devices pass through to confidential VMs.
+The support is defined by PCIe 6, SPDM, TDISP (not AMD) and SEV TIO specification (by AMD).
+
+SEV TIO spec:
+https://www.amd.com/content/dam/amd/en/documents/epyc-technical-docs/specifications/58271_0_70.pdf
+Whitepaper:
+https://www.amd.com/content/dam/amd/en/documents/epyc-business-docs/white-papers/sev-tio-whitepaper.pdf
+
+The changeset adds:
+- a generic TSM.ko module;
+makes necessary changes to:
+- AMD ccp (interface to AMD secure platform processor, "PSP", works on the host),
+- AMD sev-guest (interace to PSP for confidential SNP guest),
+- AMD kvm_amd module,
+- generic KVM.
+
+Acronyms
+--------
+
+PSP - AMD platform secure processor (also "ASP"), acts as TSM.
+SEV TIO - the TIO protocol implemented by the PSP
+GHCB - guest/host communication block - a protocol for guest-to-host communication
+	via a shared page
+
+Code
+----
+
+The basic idea (probably a wrong one) is:
+- add a common module - TSM.ko, when it loads - it initializes TEE IO devices
+(which means different things in host and guest);
+- add necessary hooks (so called "tsm_ops") for TSM.ko in the host kernel
+and the guest kernel.
+
+After TSM.ko is finished, similar data structures in both host and guest
+are going to have attestation report and other things stored/configured.
+
+
+The module stores certificates/measurements/report for both too.
+
+Based on the latest AMD SNP https://github.com/AMDESE/linux/tree/snp-host-latest
+
+
+
+Workflow
+--------
+
+The host, at boot time:
+- Linux PCI does PCI device enumeration and resource assignment;
+- drivers/modules load as usual with one tweak: load "TSM" before "ccp"
+	so "ccp" could register its hooks with "TSM" (depmod takes care of this);
+- tdisk.ko loads at some point and:
+	- exports tdisp_set_ops();
+	- upon tdisp_set_ops() call:
+		- initializes internal structures for all capable PFs and VFs;
+		- calls "ccp" hooks to talk to PSP via SEV TIO which triggers
+			DOE trafic.
+			- TIO_STATUS/TIO_DEV_CREATE/TIO_DEV_CONNECT
+			- TIO_TDI_CREATE
+
+Later, QEMU starts with -device vfio-pci,... with a TDISP-capable device.
+PCIe DEVCAP TEE IO bit should just be passed through to the VM (have to verify).
+QEMU tells the KVM about guest PCI ID at the reset time.
+
+QEMU calls TIO_TDI_BIND before starting the guest.
+
+The guest, at boot time:
+- Linux PCI does PCI device enumeration and resource assignment;
+- /etc/modprobe is configured to load modules in order:
+	1) "sev-guest";
+	2) "TSM" module (to allow "sev-guest" register its hooks with "TSM");
+		- exports tdisp_set_ops();
+		- upon tdisp_set_ops() call:
+			- initializes internal structures for all capable PFs and VFs;
+			- the first SEV TIO guest message triggers TDI_BIND
+				- TIO_TDI_BIND
+			- calls "sev-guest" hooks to talk to HV (via GHCB) and PSP (via SEV TIO)
+				- TIO_GUEST_REQUEST TIO_MSG_TDI_INFO_REQ
+			- verify/enable MMIO and DMA (via the PSP)
+				- TIO_GUEST_REQUEST TIO_MSG_MMIO_VALIDATE_REQ/TIO_MSG_SDTE_WRITE_REQ
+	3) TDISP-capable device driver (so the device driver probes a TDISP-enabled device)
+
+
+Assumptions
+-----------
+
+Once a TDISP device is available for development, this tree is enough to get
+it going secure.
+
+A generic TSM.ko can run some basic check on the attestation report to decide
+whether to work with the device at all and how if yes - SWIOTLB/DMA. If we want
+more checks, then... discuss :)
+
+There is no SVSM running (an optional priveledged firmware runniing in the VM).
+If there was, since the most guest messages should be sent from VMPL0 (the highest
+VM priv. level), SVSM protocol update is needed.
+
+The guest-to-PSP trafic will have a guest PCI ID as a target ID but GHCB communication
+never (?) exits to QEMU, the VFIO KVM device needs to be taught about guest-to-host
+PCI ID mappings.
+
+The patchset starts with implementing the post-bind case, the last two patches
+add pre-binding, hence the name of the KVM_DEV_VFIO_DEVICE_TDI_BIND ioctl.
+
+Just IDE can be enabled on the host but the PSP support is needed.
+
+TSM.ko is a module (not built-in) to allow some freedom in initialization
+order, good for debugging too.
+
+QEMU advertises TEE-IO capability to the VM (pass through it from the host?).
+
+TDI_BIND happens if the VM recognises TEE-IO bit and when  asks for TDI info.
+Asking for the info is going to trigger binding and retrieving all the binary
+blobs - device measurements, certificates, attestation report.
+
+SEV SNP VMs cannot reboot.
+
+
+TODOs
+-----
+
+Deal with PCI reset. Hot unplug+plug? Power states too.
+
+Add sysfs entries for device measurements, certificates, attestation report.
+
+Add a sysfs knob to switch SWIOTLB and real direct DMA.
+
+Invent a way (ACPI?) to inform the VM about its TDISP status (for SVSM).
+
+Do better generalization, the current code heavily uses SEV TIO defined
+structures in supposedly generic code.
+
+
+QEMU tree
+---------
+
+https://github.com/aik/qemu/commits/tio
+
+
+(old text)
+
 Linux kernel
 ============
 
