@@ -129,6 +129,7 @@ config KVM_AMD_SEV
 	select KVM_SW_PROTECTED_VM
 	select HAVE_KVM_GMEM_PREPARE
 	select HAVE_KVM_GMEM_INVALIDATE
+	select KVM_VFIO
 	help
 	  Provides support for launching Encrypted VMs (SEV) and Encrypted VMs
 	  with Encrypted State (SEV-ES) on AMD processors.

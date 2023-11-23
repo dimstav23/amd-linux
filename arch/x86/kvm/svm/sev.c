@@ -20,6 +20,9 @@
 #include <linux/processor.h>
 #include <linux/trace_events.h>
 #include <uapi/linux/sev-guest.h>
+#include <linux/tsm.h>
+#include <linux/pci.h>
+#include <linux/vfio.h>
 
 #include <asm/pkru.h>
 #include <asm/trapnr.h>
@@ -3795,6 +3798,144 @@ e_fail:
 	ghcb_set_sw_exit_info_2(svm->sev_es.ghcb, exitcode);
 }
 
+static int tio_make_mmio_private(struct vcpu_svm *svm, struct pci_dev *pdev,
+				 phys_addr_t mmio_gpa, phys_addr_t mmio_size,
+				 unsigned rangeid)
+{
+	if (!mmio_gpa)
+		return SEV_RET_INVALID_ADDRESS;
+
+	if (!mmio_size || mmio_size != pci_resource_len(pdev, rangeid))
+		return SEV_RET_INVALID_PARAM;
+
+	for (phys_addr_t off = 0; off < mmio_size; off += PAGE_SIZE) {
+		int ret = rmp_make_private(pci_resource_start(pdev, rangeid) + off,
+					   mmio_gpa + off, PG_LEVEL_4K, svm->asid,
+					   true/*Immutable*/);
+		if (ret) {
+			pci_dbg(pdev, "Failed to map TIO %pR + %llx -> %llx\n",
+			       pci_resource_n(pdev, rangeid), off, mmio_gpa + off);
+			return SEV_RET_INVALID_ADDRESS;
+		}
+	}
+
+	return SEV_RET_SUCCESS;
+}
+
+static void snp_handle_tio_guest_request(struct vcpu_svm *svm, gpa_t req_gpa, gpa_t resp_gpa)
+{
+	struct tio_guest_request req = { 0 };
+	struct kvm_vcpu *vcpu = &svm->vcpu;
+	struct kvm *kvm = vcpu->kvm;
+	unsigned long exitcode = 0;
+	unsigned long data_npages;
+	struct kvm_sev_info *sev;
+	int fw_err, rc, bindfd;
+	u32 guest_rid;
+	u64 data_gpa;
+	struct fd fdev, sevf;
+	struct tsm_tdi *tdi;
+	struct snp_guest_msg_hdr req_hdr;
+	struct tio_blob_table_entry t[4];
+
+	if (!sev_snp_guest(vcpu->kvm)) {
+		rc = SEV_RET_INVALID_GUEST;
+		goto e_fail;
+	}
+
+	sev = &to_kvm_svm(kvm)->sev_info;
+
+	data_gpa = vcpu->arch.regs[VCPU_REGS_RAX];
+	data_npages = vcpu->arch.regs[VCPU_REGS_RBX];
+	guest_rid = vcpu->arch.regs[VCPU_REGS_RCX];
+
+	if (kvm_read_guest(kvm, req_gpa, &req_hdr, sizeof(req_hdr))) {
+		exitcode = SEV_RET_INVALID_ADDRESS;
+		goto e_fail;
+	}
+
+	if (!IS_ALIGNED(data_gpa, PAGE_SIZE)) {
+		exitcode = SEV_RET_INVALID_ADDRESS;
+		goto e_fail;
+	}
+
+	mutex_lock(&sev->guest_req_lock);
+
+	rc = snp_setup_guest_buf(svm, &req.data, req_gpa, resp_gpa);
+	if (rc)
+		goto unlock;
+
+	sevf = fdget(sev->fd);
+	if (!sevf.file)
+		goto cleanup;
+
+
+	bindfd = tsm_tdi_find(guest_rid, (u64) __psp_pa(sev->snp_context));
+	if (bindfd < 0)
+		goto cleanup;
+
+	rc = tsm_guest_request(bindfd, &req, fdev.file);
+	if (rc) {
+		exitcode = fw_err;
+		goto cleanup;
+	}
+
+	tdi = tsm_bindfd_to_tdi(bindfd);
+	if (req_hdr.msg_type == TIO_MSG_MMIO_VALIDATE_REQ) {
+		const u64 raw_gpa = vcpu->arch.regs[VCPU_REGS_RDX];
+
+		if (MMIO_VALIDATE_RESERVED(raw_gpa))
+			exitcode = SEV_RET_INVALID_PARAM;
+		else
+			exitcode = tio_make_mmio_private(svm, tdi->pdev,
+							 MMIO_VALIDATE_GPA(raw_gpa),
+							 MMIO_VALIDATE_LEN(raw_gpa),
+							 MMIO_VALIDATE_RANGEID(raw_gpa));
+
+		if (exitcode != SEV_RET_SUCCESS)
+			goto cleanup;
+	}
+
+	if (tdi->tdev->certs && tdi->tdev->meas && tdi->report) {
+		vcpu->arch.regs[VCPU_REGS_RBX] = PAGE_ALIGN((tdi->tdev->certs->len  +
+			tdi->tdev->meas->len + tdi->report->len + sizeof(t)) >> PAGE_SHIFT);
+
+		if (data_gpa && ((data_npages << PAGE_SHIFT) >= vcpu->arch.regs[VCPU_REGS_RBX])) {
+			struct tio_blob_table_entry t[4] = {
+				{ .guid = TIO_GUID_MEASUREMENTS,
+					.offset = sizeof(t),
+					.length = tdi->tdev->meas->len },
+				{ .guid = TIO_GUID_CERTIFICATES,
+					.offset = sizeof(t) + tdi->tdev->meas->len,
+					.length = tdi->tdev->certs->len },
+				{ .guid = TIO_GUID_REPORT,
+					.offset = sizeof(t) + tdi->tdev->meas->len + tdi->tdev->certs->len,
+					.length = tdi->report->len },
+				{ .guid.b = { 0 } }
+			};
+			if (kvm_write_guest(kvm, data_gpa + 0, &t, sizeof(t)) ||
+			    kvm_write_guest(kvm, data_gpa + t[0].offset,
+					    tdi->tdev->meas->data, tdi->tdev->meas->len) ||
+			    kvm_write_guest(kvm, data_gpa + t[1].offset,
+					    tdi->tdev->certs->data, tdi->tdev->certs->len) ||
+			    kvm_write_guest(kvm, data_gpa + t[2].offset,
+					    tdi->report->data, tdi->report->len))
+				exitcode = SEV_RET_INVALID_ADDRESS;
+		}
+	}
+
+cleanup:
+	snp_cleanup_guest_buf(&req.data, &exitcode);
+
+unlock:
+	mutex_unlock(&sev->guest_req_lock);
+
+e_fail:
+	ghcb_set_sw_exit_info_2(svm->sev_es.ghcb, exitcode);
+	if (sevf.file)
+		fdput(sevf);
+}
+
 static int sev_handle_vmgexit_msr_protocol(struct vcpu_svm *svm)
 {
 	struct vmcb_control_area *control = &svm->vmcb->control;
@@ -4072,6 +4213,12 @@ int sev_handle_vmgexit(struct kvm_vcpu *vcpu)
 					     control->exit_info_1,
 					     control->exit_info_2);
 
+		ret = 1;
+		break;
+	case SVM_VMGEXIT_SEV_TIO_GUEST_REQUEST:
+		snp_handle_tio_guest_request(svm,
+					     control->exit_info_1,
+					     control->exit_info_2);
 		ret = 1;
 		break;
 	case SVM_VMGEXIT_UNSUPPORTED_EVENT:
