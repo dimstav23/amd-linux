@@ -80,4 +80,7 @@ bool sev_version_greater_or_equal(u8 maj, u8 min);
 
 int __sev_do_cmd_locked(int cmd, void *data, int *psp_ret);
 
+extern const struct file_operations sev_fops;
+extern struct mutex sev_cmd_mutex;
+
 #endif /* __SEV_DEV_H */

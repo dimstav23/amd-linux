@@ -45,7 +45,7 @@
 #define SNP_MIN_API_MAJOR	1
 #define SNP_MIN_API_MINOR	51
 
-static DEFINE_MUTEX(sev_cmd_mutex);
+DEFINE_MUTEX(sev_cmd_mutex);
 static struct sev_misc_dev *misc_dev;
 
 static int psp_cmd_timeout = 100;
@@ -2060,7 +2060,7 @@ out:
 	return ret;
 }
 
-static const struct file_operations sev_fops = {
+const struct file_operations sev_fops = {
 	.owner	= THIS_MODULE,
 	.unlocked_ioctl = sev_ioctl,
 };
