@@ -221,7 +221,7 @@ static int sev_cmd_buffer_len(int cmd)
 	return 0;
 }
 
-static int snp_reclaim_pages(unsigned long paddr, unsigned int npages, bool locked)
+int snp_reclaim_pages(unsigned long paddr, unsigned int npages, bool locked)
 {
 	/* Cbit maybe set in the paddr */
 	unsigned long pfn = __sme_clr(paddr) >> PAGE_SHIFT;
