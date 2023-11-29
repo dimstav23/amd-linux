@@ -36,6 +36,7 @@
 
 #include "psp-dev.h"
 #include "sev-dev.h"
+#include "sev-dev-tio.h"
 
 #define DEVICE_NAME		"sev"
 #define SEV_FW_FILE		"amd/sev.fw"
@@ -215,7 +216,7 @@ static int sev_cmd_buffer_len(int cmd)
 	case SEV_CMD_SNP_PLATFORM_STATUS:	return sizeof(struct sev_data_snp_addr);
 	case SEV_CMD_SNP_GUEST_REQUEST:		return sizeof(struct sev_data_snp_guest_request);
 	case SEV_CMD_SNP_CONFIG:		return sizeof(struct sev_user_data_snp_config);
-	default:				return 0;
+	default:				return sev_tio_cmd_buffer_len(cmd);
 	}
 
 	return 0;
@@ -921,7 +922,7 @@ static int __sev_init_ex_locked(int *error)
 		 */
 		data.tmr_address = __pa(sev_es_tmr);
 
-		data.flags |= SEV_INIT_FLAGS_SEV_ES;
+		data.flags |= SEV_INIT_FLAGS_SEV_ES | SEV_INIT_FLAGS_SEV_TIO_EN;
 		data.tmr_len = sev_es_tmr_size;
 	}
 
@@ -1479,6 +1480,7 @@ static int __sev_snp_init_locked(int *error)
 		data.init_rmp = 1;
 		data.list_paddr_en = 1;
 		data.list_paddr = __psp_pa(snp_range_list);
+		data.tio_en = 1;
 
 		/*
 		 * Before invoking SNP_INIT_EX with INIT_RMP=1, make sure that
@@ -1490,6 +1492,8 @@ static int __sev_snp_init_locked(int *error)
 		wbinvd_on_all_cpus();
 
 		rc = __sev_do_cmd_locked(SEV_CMD_SNP_INIT_EX, &data, error);
+		pr_err("___K___ %s %u: SEV_CMD_SNP_INIT_EX(rmp=%d tio=%d) -> rc=%x error=%x\n",
+			__func__, __LINE__, data.init_rmp,  data.tio_en, rc, *error);
 		if (rc)
 			return rc;
 	} else {
@@ -2424,6 +2428,10 @@ void sev_pci_init(void)
 
 	atomic_notifier_chain_register(&panic_notifier_list,
 				       &sev_snp_panic_notifier);
+
+	if (cpu_feature_enabled(X86_FEATURE_SEV_SNP))
+		sev_tsm_set_ops(true);
+
 	return;
 
 err:
@@ -2438,6 +2446,7 @@ void sev_pci_exit(void)
 	if (!sev)
 		return;
 
+	sev_tsm_set_ops(false);
 	sev_firmware_shutdown(sev);
 
 	atomic_notifier_chain_unregister(&panic_notifier_list,

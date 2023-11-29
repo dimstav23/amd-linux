@@ -86,7 +86,6 @@ typedef enum {
 	SEV_RET_TIO_RECLAIM_REQUIRED		= 0x2D,
 	SEV_RET_TIO_IN_USE			= 0x2E,
 	SEV_RET_TIO_SPDM_REQUEST		= 0x123, /* FIXME */
-
 	SEV_RET_ERR_UNKNOWN                       = 0x8000,
 	SEV_RET_ERR_INVAL                         = 0x8001,
 	SEV_RET_ERR_INVALID_PARAMS                = 0x8003,
