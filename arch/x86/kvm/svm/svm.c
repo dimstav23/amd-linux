@@ -5045,6 +5045,8 @@ static struct kvm_x86_ops svm_x86_ops __initdata = {
 	.gmem_prepare = sev_gmem_prepare,
 	.gmem_max_level = sev_gmem_max_level,
 	.gmem_invalidate = sev_gmem_invalidate,
+
+	.tsm_vmid = sev_tsm_vmid,
 };
 
 /*

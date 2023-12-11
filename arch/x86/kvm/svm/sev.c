@@ -4773,3 +4773,10 @@ int sev_gmem_max_level(struct kvm *kvm, kvm_pfn_t pfn, gfn_t gfn, u8 *max_level)
 
 	return 0;
 }
+
+u64 sev_tsm_vmid(struct kvm *kvm)
+{
+	struct kvm_sev_info *sev = &to_kvm_svm(kvm)->sev_info;
+
+	return (u64) __psp_pa(sev->snp_context);
+}

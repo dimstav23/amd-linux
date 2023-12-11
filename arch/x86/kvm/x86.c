@@ -13730,3 +13730,9 @@ static void __exit kvm_x86_exit(void)
 	 */
 }
 module_exit(kvm_x86_exit);
+
+u64 kvm_arch_tsm_vmid(struct kvm *kvm)
+{
+	return static_call(kvm_x86_tsm_vmid)(kvm);
+}
+EXPORT_SYMBOL_GPL(kvm_arch_tsm_vmid);

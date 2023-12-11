@@ -2439,4 +2439,6 @@ int kvm_arch_gmem_prepare(struct kvm *kvm, gfn_t gfn, kvm_pfn_t pfn, int max_ord
 void kvm_arch_gmem_invalidate(kvm_pfn_t start, kvm_pfn_t end);
 #endif
 
+u64 kvm_arch_tsm_vmid(struct kvm *kvm);
+
 #endif
